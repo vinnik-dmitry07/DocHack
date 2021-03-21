@@ -7,7 +7,7 @@ from telegram.ext import CommandHandler
 from telegram.ext import MessageHandler, Filters
 from telegram.ext import Updater
 
-from main import pre_process
+from prepare_data import pre_process
 from train import BERTClass, TOKENIZER, MODEL_TYPE, DEVICE, MAX_LEN
 
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
