@@ -1,3 +1,11 @@
+# Copyright 2021 by Dmytro Vynnyk.
+# All rights reserved.
+# This file is part of the your-doc-bot Telegram bot,
+# and is released under the Creative Commons Attribution-NonCommercial-NoDerivatives 4.0 International License.
+# To view a copy of this license, visit http://creativecommons.org/licenses/by-nc-nd/4.0/
+# or send a letter to Creative Commons, PO Box 1866, Mountain View, CA 94042, USA.".
+# Please see the LICENSE file that should have been included as part of this package.
+
 import time
 
 import pandas as pd

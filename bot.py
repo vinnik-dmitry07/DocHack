@@ -1,3 +1,11 @@
+# Copyright 2021 by Dmytro Vynnyk.
+# All rights reserved.
+# This file is part of the your-doc-bot Telegram bot,
+# and is released under the Creative Commons Attribution-NonCommercial-NoDerivatives 4.0 International License.
+# To view a copy of this license, visit http://creativecommons.org/licenses/by-nc-nd/4.0/
+# or send a letter to Creative Commons, PO Box 1866, Mountain View, CA 94042, USA.".
+# Please see the LICENSE file that should have been included as part of this package.
+
 import logging
 from functools import lru_cache
 
@@ -40,8 +48,6 @@ def get_prediction(text_input):
     mask = inputs['attention_mask']
     token_type_ids = inputs['token_type_ids']
 
-    # We have to add another dimension to the tensors
-    # hence the [ids], [mask], etc...
     ids = torch.tensor([ids], dtype=torch.long)
     mask = torch.tensor([mask], dtype=torch.long)
     token_type_ids = torch.tensor([token_type_ids], dtype=torch.long)
@@ -52,10 +58,8 @@ def get_prediction(text_input):
     outputs = model(ids, mask, token_type_ids)
     outputs = outputs > 0.5
 
-    # fit possible labels to y
     mlb.fit(outputs)
 
-    # Decode prediction array (returns tuple with categories)
     prediction = mlb.inverse_transform(outputs.cpu())[0]
     return prediction
 
