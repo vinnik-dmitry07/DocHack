@@ -29,7 +29,7 @@ MODEL = transformers.BertModel
 MODEL_TYPE = 'bert-base-multilingual-uncased'
 MODEL_LAST_LAYER_WIDTH = 768
 TOKENIZER = transformers.BertTokenizer
-CLASSES_NUM = 12
+CLASSES_NUM = 31
 
 
 class CustomDataset(Dataset):
@@ -51,7 +51,7 @@ class CustomDataset(Dataset):
             None,
             add_special_tokens=True,
             max_length=self.max_len,
-            pad_to_max_length=True,
+            padding='max_length',
             return_token_type_ids=True
         )
         ids = inputs['input_ids']
@@ -74,7 +74,7 @@ class BERTClass(torch.nn.Module):
         self.l3 = torch.nn.Linear(MODEL_LAST_LAYER_WIDTH, CLASSES_NUM)
 
     def forward(self, ids, mask, token_type_ids):
-        _, output_1 = self.l1(ids, attention_mask=mask, token_type_ids=token_type_ids)
+        _, output_1 = self.l1(ids, attention_mask=mask, token_type_ids=token_type_ids, return_dict=False)
         output_2 = self.l2(output_1)
         output = self.l3(output_2)
         return output
@@ -84,10 +84,10 @@ def loss_fn(outputs, targets):
     return torch.nn.BCEWithLogitsLoss()(outputs, targets)
 
 
-def train(epoch, log_steps=5, saves_num=40, model_ver=5):
+def train(epoch, log_steps=5, saves_num=40, model_ver=6):
     model.train()
     min_loss = 0.3
-    max_acc = 0.25
+    max_acc = 0.0
 
     for i, data in enumerate(training_loader):
         ids = data['ids'].to(DEVICE, dtype=torch.long)
@@ -134,7 +134,7 @@ def train(epoch, log_steps=5, saves_num=40, model_ver=5):
 
 
 if __name__ == '__main__':
-    df = pd.read_csv('comment_classes.csv')
+    df = pd.read_csv('data/comment_specialty.csv')
     df['classes'] = df['classes'].apply(literal_eval)
     new_df = df.copy()
     print(new_df.head())

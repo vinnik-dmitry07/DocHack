@@ -7,9 +7,11 @@
 # Please see the LICENSE file that should have been included as part of this package.
 
 import logging
-from functools import lru_cache
 
+import pandas as pd
+import scipy.spatial
 import torch
+from sentence_transformers import SentenceTransformer
 from sklearn.preprocessing import MultiLabelBinarizer
 from telegram.ext import CommandHandler
 from telegram.ext import MessageHandler, Filters
@@ -18,22 +20,24 @@ from telegram.ext import Updater
 from prepare_data import pre_process
 from train import BERTClass, TOKENIZER, MODEL_TYPE, DEVICE, MAX_LEN
 
-logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
+# logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
 
 model = BERTClass()
 model.to(DEVICE)
-model = torch.load('checkpoints/model4_acc_0.75')
+model = torch.load('checkpoints/model5_acc_0.875')
 model.eval()
 
 tokenizer_ = TOKENIZER.from_pretrained(MODEL_TYPE, cache_dir='cache')
 
-_labels = [3, 13, 52, 15, 56, 61, 8, 23, 28, 40, 49, 53]
-labels = ['Акушер-гинеколог', 'Гинеколог', 'УЗИ-специалист', 'Дерматолог', 'Хирург', 'Дерматовенеролог',
-          'Гастроэнтеролог', 'Отоларинголог (ЛОР)', 'Невролог', 'Психотерапевт', 'Терапевт', 'Уролог']
+labels = pd.read_csv('data/speciality_id_name.csv')['name'].tolist()
 mlb = MultiLabelBinarizer(sparse_output=False, classes=labels)
 
+comment_disease = pd.read_csv('data/comment_disease.csv')
+corpus = comment_disease['comment'].tolist()
+embedder = SentenceTransformer('distiluse-base-multilingual-cased-v2')  # semantic search
+corpus_embeddings = embedder.encode(corpus)
 
-@lru_cache(maxsize=None)
+
 def get_prediction(text_input):
     inputs = tokenizer_.encode_plus(
         text_input,
@@ -56,7 +60,7 @@ def get_prediction(text_input):
     mask = mask.to(DEVICE, dtype=torch.long)
     token_type_ids = token_type_ids.to(DEVICE, dtype=torch.long)
     outputs = model(ids, mask, token_type_ids)
-    outputs = outputs > 0.5
+    outputs = outputs > 0
 
     mlb.fit(outputs)
 
@@ -76,12 +80,36 @@ start_handler = CommandHandler('start', start)
 dispatcher.add_handler(start_handler)
 
 
-def answer(update, context):
+def answer_disease(update, context):
+    if not update.message:
+        return
+
+    query = pre_process(update.message.text)
+    query_embedding = embedder.encode([query])
+
+    closest_n = 5
+    distances = scipy.spatial.distance.cdist(query_embedding, corpus_embeddings, 'cosine')[0]
+
+    results = zip(range(len(distances)), distances)
+    results = sorted(results, key=lambda x: x[1])
+
+    res = 'Найбільш схожі хвороби: \n'
+    for idx, distance in results[0:closest_n]:
+        res += comment_disease['classes'][idx] + f' (Імовірність: {1 - distance:.4f})\n'
+
+    context.bot.send_message(chat_id=update.effective_chat.id, text=res)
+
+
+def answer_doctor(update, context):
+    if not update.message:
+        return
+
     an_answer = ' '.join(get_prediction(pre_process(update.message.text)))
+    an_answer = an_answer if an_answer else 'Нажаль необхідно більше інформації('
     context.bot.send_message(chat_id=update.effective_chat.id, text=an_answer)
 
 
-handler = MessageHandler(Filters.text & (~Filters.command), answer)
+handler = MessageHandler(Filters.text & (~Filters.command), answer_doctor)
 dispatcher.add_handler(handler)
 
 updater.start_polling()
