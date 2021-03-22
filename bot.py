@@ -6,45 +6,32 @@
 # or send a letter to Creative Commons, PO Box 1866, Mountain View, CA 94042, USA.".
 # Please see the LICENSE file that should have been included as part of this package.
 
-import logging
+from typing import Tuple
 
 import pandas as pd
 import scipy.spatial
 import torch
 from sentence_transformers import SentenceTransformer
 from sklearn.preprocessing import MultiLabelBinarizer
-from telegram.ext import CommandHandler
-from telegram.ext import MessageHandler, Filters
-from telegram.ext import Updater
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.ext import CommandHandler, MessageHandler, Filters, Updater, CallbackContext, CallbackQueryHandler, \
+    ConversationHandler
 
 from prepare_data import pre_process
+from secret import TOKEN
 from train import BERTClass, TOKENIZER, MODEL_TYPE, DEVICE, MAX_LEN
 
+# import logging
 # logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
 
-model = BERTClass()
-model.to(DEVICE)
-model = torch.load('checkpoints/model5_acc_0.875')
-model.eval()
-
-tokenizer_ = TOKENIZER.from_pretrained(MODEL_TYPE, cache_dir='cache')
-
-labels = pd.read_csv('data/speciality_id_name.csv')['name'].tolist()
-mlb = MultiLabelBinarizer(sparse_output=False, classes=labels)
-
-comment_disease = pd.read_csv('data/comment_disease.csv')
-corpus = comment_disease['comment'].tolist()
-embedder = SentenceTransformer('distiluse-base-multilingual-cased-v2')  # semantic search
-corpus_embeddings = embedder.encode(corpus)
+MENU, DISEASE_OPTION, DOCTOR_OPTION, SELECTING_HANDLER = map(str, range(4))
 
 
-def get_prediction(text_input):
-    inputs = tokenizer_.encode_plus(
+def get_prediction(text_input) -> Tuple[str]:
+    inputs = tokenizer.encode_plus(
         text_input,
-        None,
-        add_special_tokens=True,
         max_length=MAX_LEN,
-        pad_to_max_length=True,
+        padding='max_length',
         return_token_type_ids=True
     )
 
@@ -68,21 +55,9 @@ def get_prediction(text_input):
     return prediction
 
 
-updater = Updater(token='1676533113:AAFA67p-IV-ggKnqHDxJCv3UZuz7EXfRjJs', use_context=True)
-dispatcher = updater.dispatcher
-
-
-def start(update, context):
-    context.bot.send_message(chat_id=update.effective_chat.id, text='Привіт, що болить?')
-
-
-start_handler = CommandHandler('start', start)
-dispatcher.add_handler(start_handler)
-
-
-def answer_disease(update, context):
+def answer_disease(update: Update, context: CallbackContext) -> str:
     if not update.message:
-        return
+        return start(update, context)
 
     query = pre_process(update.message.text)
     query_embedding = embedder.encode([query])
@@ -95,21 +70,80 @@ def answer_disease(update, context):
 
     res = 'Найбільш схожі хвороби: \n'
     for idx, distance in results[0:closest_n]:
-        res += comment_disease['classes'][idx] + f' (Імовірність: {1 - distance:.4f})\n'
+        res += disease_symptoms['disease'][idx] + f' (Імовірність: {1 - distance:.4f})\n'
 
-    context.bot.send_message(chat_id=update.effective_chat.id, text=res)
+    update.message.reply_text(res)
+
+    return start(update, context)
 
 
-def answer_doctor(update, context):
+def answer_doctor(update: Update, context: CallbackContext) -> str:
     if not update.message:
-        return
+        return start(update, context)
 
-    an_answer = ' '.join(get_prediction(pre_process(update.message.text)))
-    an_answer = an_answer if an_answer else 'Нажаль необхідно більше інформації('
-    context.bot.send_message(chat_id=update.effective_chat.id, text=an_answer)
+    answer = ' '.join(get_prediction(pre_process(update.message.text)))
+    answer = answer if answer else 'Нажаль цієї інформації не достатньо :('
+    update.message.reply_text(answer)
+
+    return start(update, context)
 
 
-handler = MessageHandler(Filters.text & (~Filters.command), answer_doctor)
-dispatcher.add_handler(handler)
+def start(update: Update, _) -> str:
+    keyboard = [[
+        InlineKeyboardButton('Визначити хворобу', callback_data=DISEASE_OPTION),
+        InlineKeyboardButton('Визначити лікаря', callback_data=DOCTOR_OPTION),
+    ]]
 
-updater.start_polling()
+    reply_markup = InlineKeyboardMarkup(keyboard)
+
+    update.message.reply_text('Виберіть опцію:', reply_markup=reply_markup)
+    return SELECTING_HANDLER
+
+
+def stop(update: Update, _) -> int:
+    update.message.reply_text('Ок, пока.')
+    return ConversationHandler.END
+
+
+def button(update: Update, context: CallbackContext) -> str:
+    query = update.callback_query
+    query.answer()
+    context.bot.send_message(chat_id=update.effective_chat.id, text='Опишіть симптоми:')
+    return query.data
+
+
+def main() -> None:
+    updater = Updater(token=TOKEN, use_context=True)
+
+    conv_handler = ConversationHandler(
+        entry_points=[CommandHandler('start', start)],
+        states={
+            SELECTING_HANDLER: [CallbackQueryHandler(button)],
+            DISEASE_OPTION: [MessageHandler(Filters.text & (~Filters.command), answer_disease)],
+            DOCTOR_OPTION: [MessageHandler(Filters.text & (~Filters.command), answer_doctor)],
+        },
+        fallbacks=[CommandHandler('stop', stop)],
+    )
+
+    updater.dispatcher.add_handler(conv_handler)
+    updater.start_polling()
+    updater.idle()
+
+
+if __name__ == '__main__':
+    model = BERTClass()
+    model.to(DEVICE)
+    model = torch.load('checkpoints/model6_loss_0.0648547112941742')
+    model.eval()
+
+    tokenizer = TOKENIZER.from_pretrained(MODEL_TYPE, cache_dir='cache')
+
+    speciality_names = pd.read_csv('data/speciality_id_name.csv')['name'].tolist()
+    mlb = MultiLabelBinarizer(classes=speciality_names)
+
+    disease_symptoms = pd.read_csv('data/disease_symptoms.csv')
+    corpus = disease_symptoms['symptoms'].tolist()
+    embedder = SentenceTransformer('distiluse-base-multilingual-cased-v2')  # semantic search
+    corpus_embeddings = embedder.encode(corpus)
+
+    main()

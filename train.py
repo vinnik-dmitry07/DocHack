@@ -7,15 +7,16 @@
 # Please see the LICENSE file that should have been included as part of this package.
 
 import time
+from ast import literal_eval
+from typing import List
 
 import pandas as pd
 import torch
-import transformers
-from torch.utils.data import Dataset, DataLoader
-from ast import literal_eval
 import torch_optimizer as optim
-from torch.utils.tensorboard import SummaryWriter
+import transformers
 from sklearn import metrics
+from torch.utils.data import Dataset, DataLoader
+from torch.utils.tensorboard import SummaryWriter
 
 writer = SummaryWriter()
 
@@ -48,15 +49,13 @@ class CustomDataset(Dataset):
 
         inputs = self.tokenizer.encode_plus(
             comment,
-            None,
-            add_special_tokens=True,
             max_length=self.max_len,
             padding='max_length',
             return_token_type_ids=True
         )
-        ids = inputs['input_ids']
-        mask = inputs['attention_mask']
-        token_type_ids = inputs['token_type_ids']
+        ids: List[int] = inputs['input_ids']
+        mask: List[int] = inputs['attention_mask']
+        token_type_ids: List[int] = inputs['token_type_ids']
 
         return {
             'ids': torch.tensor(ids, dtype=torch.long),
@@ -84,24 +83,47 @@ def loss_fn(outputs, targets):
     return torch.nn.BCEWithLogitsLoss()(outputs, targets)
 
 
-def train(epoch, log_steps=5, saves_num=40, model_ver=6):
+def validation(epoch):
+    model.eval()
+    fin_targets = []
+    fin_outputs = []
+    with torch.no_grad():
+        for i, data in enumerate(testing_loader):
+            if i % 100 == 0:
+                if i > 0:
+                    tac = time.time()
+                    secs = (len(testing_loader) - i) * (tac - tic) / 100
+                    print(f'Secs: {secs:.2f}, Mins: {secs / 60:.2f}, Hours: {secs / 60 / 60:.2f}')
+                tic = time.time()
+            ids = data['ids'].to(DEVICE)
+            mask = data['mask'].to(DEVICE)
+            token_type_ids = data['token_type_ids'].to(DEVICE)
+            targets = data['targets'].to(DEVICE)
+            outputs = model(ids, mask, token_type_ids)
+            fin_targets.extend(targets.cpu().detach().numpy().tolist())
+            fin_outputs.extend(torch.sigmoid(outputs).cpu().detach().numpy().tolist())
+    return fin_outputs, fin_targets
+
+
+def train(epoch, log_steps=5, saves_num=40, model_ver=7):
     model.train()
     min_loss = 0.3
     max_acc = 0.0
 
     for i, data in enumerate(training_loader):
-        ids = data['ids'].to(DEVICE, dtype=torch.long)
-        mask = data['mask'].to(DEVICE, dtype=torch.long)
-        token_type_ids = data['token_type_ids'].to(DEVICE, dtype=torch.long)
-        targets = data['targets'].to(DEVICE, dtype=torch.float)
+        optimizer.zero_grad()
+
+        ids = data['ids'].to(DEVICE)
+        mask = data['mask'].to(DEVICE)
+        token_type_ids = data['token_type_ids'].to(DEVICE)
+        targets = data['targets'].to(DEVICE)
 
         outputs = model(ids, mask, token_type_ids)
-
-        optimizer.zero_grad()
         loss = loss_fn(outputs, targets)
+
         acc = metrics.accuracy_score(data['targets'], outputs.cpu() > 0.5)
 
-        if loss < min_loss:
+        if loss < min_loss and acc > 0:
             min_loss = loss
             torch.save(model, f'checkpoints/model{model_ver}_loss_{min_loss}')
             print(f'Save Loss: {loss}, Acc: {acc}')
@@ -109,7 +131,7 @@ def train(epoch, log_steps=5, saves_num=40, model_ver=6):
         if acc > max_acc:
             max_acc = acc
             torch.save(model, f'checkpoints/model{model_ver}_acc_{max_acc}')
-            print(f'Save Loss: {loss}, Acc: {acc}')
+            print(f'Save Acc: {acc}, Loss: {loss}')
 
         if i % log_steps == 0:
             if i > 0:
@@ -128,7 +150,6 @@ def train(epoch, log_steps=5, saves_num=40, model_ver=6):
             torch.save(model, f'checkpoints/model{model_ver}_{epoch}')
             print('Save', i)
 
-        optimizer.zero_grad()
         loss.backward()
         optimizer.step()
 
@@ -136,37 +157,24 @@ def train(epoch, log_steps=5, saves_num=40, model_ver=6):
 if __name__ == '__main__':
     df = pd.read_csv('data/comment_specialty.csv')
     df['classes'] = df['classes'].apply(literal_eval)
-    new_df = df.copy()
-    print(new_df.head())
+    print(df.head())
 
     tokenizer_ = TOKENIZER.from_pretrained(MODEL_TYPE, cache_dir='cache')  # bert-base-multilingual-uncased
 
     train_size = 0.8
-    train_dataset = new_df.sample(frac=train_size, random_state=200)
-    test_dataset = new_df.drop(train_dataset.index).reset_index(drop=True)
+    train_dataset = df.sample(frac=train_size, random_state=200)
+    test_dataset = df.drop(train_dataset.index).reset_index(drop=True)
     train_dataset = train_dataset.reset_index(drop=True)
 
-    print(f'FULL Dataset: {new_df.shape}')
+    print(f'FULL Dataset: {df.shape}')
     print(f'TRAIN Dataset: {train_dataset.shape}')
     print(f'TEST Dataset: {test_dataset.shape}')
 
     training_set = CustomDataset(train_dataset, tokenizer_, MAX_LEN)
     testing_set = CustomDataset(test_dataset, tokenizer_, MAX_LEN)
 
-    train_params = {
-        'batch_size': TRAIN_BATCH_SIZE,
-        'shuffle': True,
-        'num_workers': 0
-    }
-
-    test_params = {
-        'batch_size': VALID_BATCH_SIZE,
-        'shuffle': True,
-        'num_workers': 0
-    }
-
-    training_loader = DataLoader(training_set, **train_params)
-    testing_loader = DataLoader(testing_set, **test_params)
+    training_loader = DataLoader(training_set, batch_size=TRAIN_BATCH_SIZE, shuffle=True)
+    testing_loader = DataLoader(testing_set, batch_size=VALID_BATCH_SIZE, shuffle=True)
 
     model = BERTClass()
     model.to(DEVICE)

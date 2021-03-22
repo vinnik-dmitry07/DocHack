@@ -52,13 +52,13 @@ if __name__ == '__main__':
         plt.xticks(rotation=25)
 
 
-    plot_dist(comment_specialty['specialty_id'], threshold=0.015)
+    plot_dist(comment_specialty['specialty_id'], threshold=0.012)
     plt.figure()
     plot_dist(comment_specialty['specialty_id'], threshold=0.)
     # plt.show()
 
     spec_dist = comment_specialty['specialty_id'].value_counts(normalize=True)
-    popular_specs = spec_dist[spec_dist > 0.012].index.to_list()  # [3, 13, 15, 52, 61, 56, 8, 23, 53, 28, 49]
+    popular_specs = spec_dist[spec_dist > 0.012].index.to_list()
 
     comment_specialty = comment_specialty[comment_specialty['specialty_id'].isin(popular_specs)]
     comment_specialty = comment_specialty.groupby('comment')['specialty_id'].apply(list).reset_index()
@@ -79,7 +79,7 @@ if __name__ == '__main__':
         .groupby('name_x')['name_y'].apply(lambda s: pre_process(' '.join(s))).reset_index()
 
     # dis_name_descript['name_x'] = np.identity(len(dis_name_descript), dtype=int).tolist()
-    comment_disease = pd.DataFrame({'comment': dis_name_descript['name_y'], 'classes': dis_name_descript['name_x']})
-    comment_disease.to_csv('data/comment_disease.csv', index=False)
+    comment_disease = pd.DataFrame({'disease': dis_name_descript['name_x'], 'symptoms': dis_name_descript['name_y']})
+    comment_disease.to_csv('data/disease_symptoms.csv', index=False)
 
     pass
