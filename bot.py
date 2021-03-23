@@ -24,7 +24,8 @@ from train import BERTClass, TOKENIZER, MODEL_TYPE, DEVICE, MAX_LEN
 # import logging
 # logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
 
-MENU, DISEASE_OPTION, DOCTOR_OPTION, SELECTING_HANDLER = map(str, range(4))
+DISEASE_OPTION, DOCTOR_OPTION, SELECTING_HANDLER = map(str, range(3))
+OPTION_PATTERN_PREFIX = 'option_'
 
 
 def get_prediction(text_input) -> Tuple[str]:
@@ -90,8 +91,8 @@ def answer_doctor(update: Update, context: CallbackContext) -> str:
 
 def start(update: Update, _) -> str:
     keyboard = [[
-        InlineKeyboardButton('Визначити хворобу', callback_data=DISEASE_OPTION),
-        InlineKeyboardButton('Визначити лікаря', callback_data=DOCTOR_OPTION),
+        InlineKeyboardButton('Визначити хворобу', callback_data=OPTION_PATTERN_PREFIX + DISEASE_OPTION),
+        InlineKeyboardButton('Визначити лікаря', callback_data=OPTION_PATTERN_PREFIX + DOCTOR_OPTION),
     ]]
 
     reply_markup = InlineKeyboardMarkup(keyboard)
@@ -109,18 +110,21 @@ def button(update: Update, context: CallbackContext) -> str:
     query = update.callback_query
     query.answer()
     context.bot.send_message(chat_id=update.effective_chat.id, text='Опишіть симптоми:')
-    return query.data
+    return query.data.strip(OPTION_PATTERN_PREFIX)
 
 
 def main() -> None:
     updater = Updater(token=TOKEN, use_context=True)
 
+    default_handlers = [CommandHandler('start', start),
+                        CallbackQueryHandler(button, pattern='^' + OPTION_PATTERN_PREFIX)]
+    # noinspection PyTypeChecker
     conv_handler = ConversationHandler(
-        entry_points=[CommandHandler('start', start)],
+        entry_points=default_handlers,
         states={
-            SELECTING_HANDLER: [CallbackQueryHandler(button)],
-            DISEASE_OPTION: [MessageHandler(Filters.text & (~Filters.command), answer_disease)],
-            DOCTOR_OPTION: [MessageHandler(Filters.text & (~Filters.command), answer_doctor)],
+            SELECTING_HANDLER: default_handlers,
+            DISEASE_OPTION: [MessageHandler(Filters.text & (~Filters.command), answer_disease)] + default_handlers,
+            DOCTOR_OPTION: [MessageHandler(Filters.text & (~Filters.command), answer_doctor)] + default_handlers,
         },
         fallbacks=[CommandHandler('stop', stop)],
     )
