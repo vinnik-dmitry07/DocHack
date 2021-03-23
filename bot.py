@@ -47,7 +47,7 @@ def get_prediction(text_input) -> Tuple[str]:
     mask = mask.to(DEVICE, dtype=torch.long)
     token_type_ids = token_type_ids.to(DEVICE, dtype=torch.long)
     outputs = model(ids, mask, token_type_ids)
-    outputs = outputs > 0
+    outputs = torch.sigmoid(outputs) > 0.5
 
     mlb.fit(outputs)
 
@@ -133,7 +133,7 @@ def main() -> None:
 if __name__ == '__main__':
     model = BERTClass()
     model.to(DEVICE)
-    model = torch.load('checkpoints/model6_loss_0.0648547112941742')
+    model = torch.load('checkpoints/modelV7_E4_S2682_F0.4749.pth')
     model.eval()
 
     tokenizer = TOKENIZER.from_pretrained(MODEL_TYPE, cache_dir='cache')

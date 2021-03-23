@@ -10,6 +10,7 @@ import time
 from ast import literal_eval
 from typing import List
 
+import numpy as np
 import pandas as pd
 import torch
 import torch_optimizer as optim
@@ -26,7 +27,7 @@ TRAIN_BATCH_SIZE = 8
 VALID_BATCH_SIZE = 4
 EPOCHS = 5
 LEARNING_RATE = 10e-06
-MODEL = transformers.BertModel
+MODEL = transformers.BertModel  # Multilabel classification
 MODEL_TYPE = 'bert-base-multilingual-uncased'
 MODEL_LAST_LAYER_WIDTH = 768
 TOKENIZER = transformers.BertTokenizer
@@ -36,9 +37,9 @@ CLASSES_NUM = 31
 class CustomDataset(Dataset):
     def __init__(self, dataframe, tokenizer, max_len):
         self.tokenizer = tokenizer
-        self.data = dataframe
+        self.dataframe = dataframe
         self.comment = dataframe.comment
-        self.targets = self.data['classes']
+        self.targets = self.dataframe['classes']
         self.max_len = max_len
 
     def __len__(self):
@@ -83,34 +84,46 @@ def loss_fn(outputs, targets):
     return torch.nn.BCEWithLogitsLoss()(outputs, targets)
 
 
-def validation(epoch):
+def validation(log_steps=50):
     model.eval()
-    fin_targets = []
-    fin_outputs = []
+    targets = []
+    outputs = []
+
     with torch.no_grad():
-        for i, data in enumerate(testing_loader):
-            if i % 100 == 0:
-                if i > 0:
-                    tac = time.time()
-                    secs = (len(testing_loader) - i) * (tac - tic) / 100
-                    print(f'Secs: {secs:.2f}, Mins: {secs / 60:.2f}, Hours: {secs / 60 / 60:.2f}')
-                tic = time.time()
+        for i, data in enumerate(test_loader):
             ids = data['ids'].to(DEVICE)
             mask = data['mask'].to(DEVICE)
             token_type_ids = data['token_type_ids'].to(DEVICE)
-            targets = data['targets'].to(DEVICE)
-            outputs = model(ids, mask, token_type_ids)
-            fin_targets.extend(targets.cpu().detach().numpy().tolist())
-            fin_outputs.extend(torch.sigmoid(outputs).cpu().detach().numpy().tolist())
-    return fin_outputs, fin_targets
+            targets_i = data['targets'].to(DEVICE)
+
+            outputs_i = model(ids, mask, token_type_ids)
+
+            targets.extend(targets_i.cpu().detach().numpy().tolist())
+            outputs.extend(torch.sigmoid(outputs_i).cpu().detach().numpy().tolist())
+
+            if i % log_steps == 0:
+                if i > 0:
+                    tac = time.time()
+                    secs = (len(test_loader) - i) * (tac - tic) / log_steps
+                    print(f'Validation: {i}/{len(test_loader)} '
+                          f'Secs: {secs:.2f}, Mins: {secs / 60:.2f}, Hours: {secs / 60 / 60:.2f}')
+                tic = time.time()
+
+    outputs = np.array(outputs) >= 0.5
+    accuracy = metrics.accuracy_score(targets, outputs)
+    f1_score_micro = metrics.f1_score(targets, outputs, average='micro')
+    f1_score_macro = metrics.f1_score(targets, outputs, average='macro')
+    print(f'Accuracy Score = {accuracy}')  # % of full matches
+    print(f'F1 Score (Micro) = {f1_score_micro}')
+    print(f'F1 Score (Macro) = {f1_score_macro}')  # all classes are equal important
+    return f1_score_micro
 
 
-def train(epoch, log_steps=5, saves_num=40, model_ver=7):
+def train(epoch, log_steps=5, valid_num=10, model_ver=8):
     model.train()
-    min_loss = 0.3
-    max_acc = 0.0
+    max_f1 = 0.
 
-    for i, data in enumerate(training_loader):
+    for i, data in enumerate(train_loader):
         optimizer.zero_grad()
 
         ids = data['ids'].to(DEVICE)
@@ -121,34 +134,29 @@ def train(epoch, log_steps=5, saves_num=40, model_ver=7):
         outputs = model(ids, mask, token_type_ids)
         loss = loss_fn(outputs, targets)
 
-        acc = metrics.accuracy_score(data['targets'], outputs.cpu() > 0.5)
-
-        if loss < min_loss and acc > 0:
-            min_loss = loss
-            torch.save(model, f'checkpoints/model{model_ver}_loss_{min_loss}')
-            print(f'Save Loss: {loss}, Acc: {acc}')
-
-        if acc > max_acc:
-            max_acc = acc
-            torch.save(model, f'checkpoints/model{model_ver}_acc_{max_acc}')
-            print(f'Save Acc: {acc}, Loss: {loss}')
-
+        acc = metrics.accuracy_score(data['targets'], torch.sigmoid(outputs).cpu() > 0.5)
         if i % log_steps == 0:
             if i > 0:
                 tac = time.time()
                 # noinspection PyUnboundLocalVariable
-                secs = (len(training_loader) - i) * (tac - tic) / log_steps
+                secs = (len(train_loader) - i) * (tac - tic) / log_steps
                 print(f'Secs: {secs:.2f}, Mins: {secs / 60:.2f}, Hours: {secs / 60 / 60:.2f}')
                 # noinspection PyUnboundLocalVariable
-                print(f'Epoch: {epoch}: {i}/{len(training_loader)}, '
+                print(f'Epoch: {epoch}: {i}/{len(train_loader)}, '
                       f'Loss: {loss}, '
                       f'Acc: {acc}')
                 writer.add_scalar('Loss/train', loss, global_step=i)
             tic = time.time()
 
-        if i % max(1, len(training_loader) // saves_num) == 0:
-            torch.save(model, f'checkpoints/model{model_ver}_{epoch}')
-            print('Save', i)
+        if i > 0 and i % max(1, len(train_loader) // valid_num) == 0:
+            f1 = validation()
+            if f1 > max_f1:
+                max_f1 = f1
+                file_name = f'checkpoints/modelV{model_ver}_E{epoch:02d}_S{i:04d}_F{f1:.4f}.pth'
+                torch.save(model, file_name)
+                print('Save', file_name)
+            else:
+                print(f'Skip {f1} < {max_f1}')
 
         loss.backward()
         optimizer.step()
@@ -159,22 +167,22 @@ if __name__ == '__main__':
     df['classes'] = df['classes'].apply(literal_eval)
     print(df.head())
 
-    tokenizer_ = TOKENIZER.from_pretrained(MODEL_TYPE, cache_dir='cache')  # bert-base-multilingual-uncased
+    tokenizer_ = TOKENIZER.from_pretrained(MODEL_TYPE, cache_dir='cache')
 
     train_size = 0.8
-    train_dataset = df.sample(frac=train_size, random_state=200)
-    test_dataset = df.drop(train_dataset.index).reset_index(drop=True)
-    train_dataset = train_dataset.reset_index(drop=True)
+    train_dataframe = df.sample(frac=train_size, random_state=200)
+    test_dataframe = df.drop(train_dataframe.index).reset_index(drop=True)
+    train_dataframe = train_dataframe.reset_index(drop=True)
 
-    print(f'FULL Dataset: {df.shape}')
-    print(f'TRAIN Dataset: {train_dataset.shape}')
-    print(f'TEST Dataset: {test_dataset.shape}')
+    print(f'Full  size: {df.shape}')
+    print(f'Train size: {train_dataframe.shape}')
+    print(f'Test  size: {test_dataframe.shape}')
 
-    training_set = CustomDataset(train_dataset, tokenizer_, MAX_LEN)
-    testing_set = CustomDataset(test_dataset, tokenizer_, MAX_LEN)
+    train_dataset = CustomDataset(train_dataframe, tokenizer_, MAX_LEN)
+    test_dataset = CustomDataset(test_dataframe, tokenizer_, MAX_LEN)
 
-    training_loader = DataLoader(training_set, batch_size=TRAIN_BATCH_SIZE, shuffle=True)
-    testing_loader = DataLoader(testing_set, batch_size=VALID_BATCH_SIZE, shuffle=True)
+    train_loader = DataLoader(train_dataset, batch_size=TRAIN_BATCH_SIZE, shuffle=True)
+    test_loader = DataLoader(test_dataset, batch_size=VALID_BATCH_SIZE, shuffle=True)
 
     model = BERTClass()
     model.to(DEVICE)
@@ -183,6 +191,6 @@ if __name__ == '__main__':
     # optimizer = torch.optim.Adam(params=model.parameters(), lr=LEARNING_RATE)
     optimizer = optim.AdaBound(params=model.parameters(), lr=LEARNING_RATE)
 
-    # model = torch.load('checkpoints/model4_0')
-    for epoch_ in range(EPOCHS):
-        train(epoch_)
+    # model = torch.load('checkpoints/model6_loss_0.0648547112941742')
+    for e in range(EPOCHS):
+        train(epoch=e)
