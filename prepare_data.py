@@ -3,7 +3,7 @@
 # This file is part of the your-doc-bot Telegram bot,
 # and is released under the Creative Commons Attribution-NonCommercial-NoDerivatives 4.0 International License.
 # To view a copy of this license, visit http://creativecommons.org/licenses/by-nc-nd/4.0/
-# or send a letter to Creative Commons, PO Box 1866, Mountain View, CA 94042, USA.".
+# or send a letter to Creative Commons, PO Box 1866, Mountain View, CA 94042, USA.
 # Please see the LICENSE file that should have been included as part of this package.
 
 import matplotlib.pyplot as plt
@@ -55,7 +55,7 @@ if __name__ == '__main__':
     plot_dist(comment_specialty['specialty_id'], threshold=0.012)
     plt.figure()
     plot_dist(comment_specialty['specialty_id'], threshold=0.)
-    # plt.show()
+    plt.show()
 
     spec_dist = comment_specialty['specialty_id'].value_counts(normalize=True)
     popular_specs = spec_dist[spec_dist > 0.012].index.to_list()
@@ -64,22 +64,28 @@ if __name__ == '__main__':
     comment_specialty = comment_specialty.groupby('comment')['specialty_id'].apply(list).reset_index()
 
     mlb = MultiLabelBinarizer(sparse_output=False, classes=popular_specs)
-    comment_specialty['classes'] = mlb.fit_transform(comment_specialty['specialty_id']).tolist()
+    comment_specialty['labels'] = mlb.fit_transform(comment_specialty['specialty_id']).tolist()
     comment_specialty.drop('specialty_id', axis=1, inplace=True)
+    comment_specialty.rename(columns={'comment': 'text'}, inplace=True)
     comment_specialty.to_csv('data/comment_specialty.csv', index=False)
+
+    plt.figure()
+    keys, counts = np.unique(comment_specialty.text.map(len).to_list(), return_counts=True)
+    plt.bar(keys, counts)
+    plt.show()
 
     speciality_id_name = speciality[['id', 'name']].set_index('id').loc[popular_specs].reset_index()
     speciality_id_name.to_csv('data/speciality_id_name.csv', index=False)
 
     disease['name'] = disease['name'].apply(lambda s: pre_process(s) if isinstance(s, str) else np.nan)
     disease.dropna(inplace=True, subset=['name'])
-    dis_name_descript = disease[['id', 'name']] \
+    comment_disease = disease[['id', 'name']] \
         .merge(disease_symptom, left_on='id', right_on='disease_id') \
         .merge(symptom[['id', 'name']], left_on='symptom_id', right_on='id')\
         .groupby('name_x')['name_y'].apply(lambda s: pre_process(' '.join(s))).reset_index()
 
-    # dis_name_descript['name_x'] = np.identity(len(dis_name_descript), dtype=int).tolist()
-    comment_disease = pd.DataFrame({'disease': dis_name_descript['name_x'], 'symptoms': dis_name_descript['name_y']})
+    # comment_disease['name_x'] = np.identity(len(comment_disease), dtype=int).tolist()
+    comment_disease.rename(columns={'name_x': 'disease', 'name_y': 'symptoms'}, inplace=True)
     comment_disease.to_csv('data/disease_symptoms.csv', index=False)
 
     pass

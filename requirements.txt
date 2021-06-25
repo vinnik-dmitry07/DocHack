@@ -10,3 +10,4 @@ torch_optimizer
 tensorboard
 sentence-transformers==1.0.2
 scipy
+# sentencepiece

@@ -3,21 +3,31 @@
 # This file is part of the your-doc-bot Telegram bot,
 # and is released under the Creative Commons Attribution-NonCommercial-NoDerivatives 4.0 International License.
 # To view a copy of this license, visit http://creativecommons.org/licenses/by-nc-nd/4.0/
-# or send a letter to Creative Commons, PO Box 1866, Mountain View, CA 94042, USA.".
+# or send a letter to Creative Commons, PO Box 1866, Mountain View, CA 94042, USA.
 # Please see the LICENSE file that should have been included as part of this package.
 
+# !pip install torch_optimizer transformers SentencePiece
+
+import datetime
+import os
 import time
 from ast import literal_eval
-from typing import List
 
 import numpy as np
 import pandas as pd
 import torch
 import torch_optimizer as optim
-import transformers
 from sklearn import metrics
+from torch import nn
+from torch.nn import BCEWithLogitsLoss
 from torch.utils.data import Dataset, DataLoader
 from torch.utils.tensorboard import SummaryWriter
+# noinspection PyUnresolvedReferences
+from transformers import BertModel, BertConfig, BertTokenizer
+from transformers import BertPreTrainedModel
+# noinspection PyUnresolvedReferences
+from transformers import RobertaModel, XLMRobertaConfig, XLMRobertaTokenizerFast
+from transformers.models.roberta.modeling_roberta import RobertaClassificationHead
 
 writer = SummaryWriter()
 
@@ -27,79 +37,134 @@ TRAIN_BATCH_SIZE = 8
 VALID_BATCH_SIZE = 4
 EPOCHS = 5
 LEARNING_RATE = 10e-06
-MODEL = transformers.BertModel  # Multilabel classification
+
+# MODEL = 'RobertaForMultiLabelSequenceClassification'
+# MODEL_TYPE = 'xlm-roberta-base'
+# CONFIG = XLMRobertaConfig
+# TOKENIZER = XLMRobertaTokenizerFast
+
+MODEL = 'BertForMultiLabelSequenceClassification'
 MODEL_TYPE = 'bert-base-multilingual-uncased'
-MODEL_LAST_LAYER_WIDTH = 768
-TOKENIZER = transformers.BertTokenizer
+CONFIG = BertConfig
+TOKENIZER = BertTokenizer
+
 CLASSES_NUM = 31
 
 
-class CustomDataset(Dataset):
-    def __init__(self, dataframe, tokenizer, max_len):
-        self.tokenizer = tokenizer
-        self.dataframe = dataframe
-        self.comment = dataframe.comment
-        self.targets = self.dataframe['classes']
-        self.max_len = max_len
+class ClassificationDataset(Dataset):
+    def __init__(self, data, tokenizer, max_seq_length):
+        text_a, labels = (data.iloc[:, 0].astype(str).tolist(), data.iloc[:, 1].tolist())
+
+        self.examples = tokenizer(
+            text=text_a,
+            text_pair=None,
+            truncation=True,
+            padding='max_length',
+            max_length=max_seq_length,
+            return_tensors='pt',
+        )
+        self.labels = torch.tensor(labels, dtype=torch.long)
 
     def __len__(self):
-        return len(self.comment)
+        return len(self.examples['input_ids'])
 
     def __getitem__(self, index):
-        comment = self.comment[index]
+        return {key: self.examples[key][index] for key in self.examples}, self.labels[index]
 
-        inputs = self.tokenizer.encode_plus(
-            comment,
-            max_length=self.max_len,
-            padding='max_length',
-            return_token_type_ids=True
+
+class RobertaForMultiLabelSequenceClassification(BertPreTrainedModel):
+    def __init__(self, config, pos_weight=None):
+        super(RobertaForMultiLabelSequenceClassification, self).__init__(config)
+        self.num_labels = config.num_labels
+        self.pos_weight = pos_weight
+
+        self.roberta = RobertaModel(config)
+        self.classifier = RobertaClassificationHead(config)
+
+    def forward(
+        self,
+        input_ids=None,
+        attention_mask=None,
+        token_type_ids=None,
+        position_ids=None,
+        head_mask=None,
+        inputs_embeds=None,
+        labels=None,
+    ):
+        outputs = self.roberta(
+            input_ids,
+            attention_mask=attention_mask,
+            token_type_ids=token_type_ids,
+            position_ids=position_ids,
+            head_mask=head_mask,
         )
-        ids: List[int] = inputs['input_ids']
-        mask: List[int] = inputs['attention_mask']
-        token_type_ids: List[int] = inputs['token_type_ids']
+        sequence_output = outputs[0]
+        logits = self.classifier(sequence_output)
 
-        return {
-            'ids': torch.tensor(ids, dtype=torch.long),
-            'mask': torch.tensor(mask, dtype=torch.long),
-            'token_type_ids': torch.tensor(token_type_ids, dtype=torch.long),
-            'targets': torch.tensor(self.targets[index], dtype=torch.float)
-        }
+        outputs = (logits,) + outputs[2:]
+        if labels is not None:
+            loss_fct = BCEWithLogitsLoss(pos_weight=self.pos_weight)
+            labels = labels.float()
+            loss = loss_fct(logits.view(-1, self.num_labels), labels.view(-1, self.num_labels))
+            outputs = (loss,) + outputs
 
-
-class BERTClass(torch.nn.Module):
-    def __init__(self):
-        super(BERTClass, self).__init__()
-        self.l1 = MODEL.from_pretrained(MODEL_TYPE, cache_dir='cache')
-        self.l2 = torch.nn.Dropout(0.3)
-        self.l3 = torch.nn.Linear(MODEL_LAST_LAYER_WIDTH, CLASSES_NUM)
-
-    def forward(self, ids, mask, token_type_ids):
-        _, output_1 = self.l1(ids, attention_mask=mask, token_type_ids=token_type_ids, return_dict=False)
-        output_2 = self.l2(output_1)
-        output = self.l3(output_2)
-        return output
+        return outputs
 
 
-def loss_fn(outputs, targets):
-    return torch.nn.BCEWithLogitsLoss()(outputs, targets)
+class BertForMultiLabelSequenceClassification(BertPreTrainedModel):
+    def __init__(self, config, pos_weight=None):
+        super(BertForMultiLabelSequenceClassification, self).__init__(config)
+        self.num_labels = config.num_labels
+        self.bert = BertModel(config)
+        self.dropout = nn.Dropout(config.hidden_dropout_prob)  # 0.1
+        self.classifier = nn.Linear(config.hidden_size, self.config.num_labels)
+        self.pos_weight = pos_weight
+
+        self.init_weights()
+
+    def forward(
+            self, input_ids, attention_mask=None, token_type_ids=None, position_ids=None, head_mask=None, labels=None,
+    ):
+        outputs = self.bert(
+            input_ids,
+            attention_mask=attention_mask,
+            token_type_ids=token_type_ids,
+            position_ids=position_ids,
+            head_mask=head_mask,
+        )
+
+        pooled_output = outputs[1]
+
+        pooled_output = self.dropout(pooled_output)
+        logits = self.classifier(pooled_output)
+
+        outputs = (logits,) + outputs[2:]  # add hidden states and attention if they are here
+
+        if labels is not None:
+            loss_fct = BCEWithLogitsLoss(pos_weight=self.pos_weight)
+            labels = labels.float()
+            loss = loss_fct(logits.view(-1, self.num_labels), labels.view(-1, self.num_labels))
+            outputs = (loss,) + outputs
+
+        return outputs  # (loss), logits, (hidden_states), (attentions)
 
 
 def validation(log_steps=50):
     model.eval()
     targets = []
-    outputs = []
+    preds = []
 
     with torch.no_grad():
-        for i, data in enumerate(test_loader):
-            ids = data['ids'].to(DEVICE)
-            mask = data['mask'].to(DEVICE)
-            token_type_ids = data['token_type_ids'].to(DEVICE)
-            targets_i = data['targets'].to(DEVICE)
+        for i, batch in enumerate(test_loader):
+            targets_i = batch[1]
+            inputs = {key: value.squeeze(1).to(DEVICE) for key, value in batch[0].items()}
+            inputs['labels'] = targets_i.to(DEVICE)
 
-            outputs_i = model(ids, mask, token_type_ids)
+            outputs_i = model(**inputs)
+            logits_i = outputs_i[1]
 
-            targets.extend(targets_i.cpu().detach().numpy().tolist())
-            outputs.extend(torch.sigmoid(outputs_i).cpu().detach().numpy().tolist())
+            targets.extend(targets_i.cpu().detach().numpy())
+            preds.extend(torch.sigmoid(logits_i).cpu().detach().numpy())
 
             if i % log_steps == 0:
                 if i > 0:
@@ -109,54 +174,42 @@ def validation(log_steps=50):
                           f'Secs: {secs:.2f}, Mins: {secs / 60:.2f}, Hours: {secs / 60 / 60:.2f}')
                 tic = time.time()
 
-    outputs = np.array(outputs) >= 0.5
-    accuracy = metrics.accuracy_score(targets, outputs)
-    f1_score_micro = metrics.f1_score(targets, outputs, average='micro')
-    f1_score_macro = metrics.f1_score(targets, outputs, average='macro')
+    pred = np.vstack(preds) > 0.5
+    accuracy = metrics.accuracy_score(targets, pred)
+    f1_score_micro = metrics.f1_score(targets, pred, average='micro')
+    f1_score_macro = metrics.f1_score(targets, pred, average='macro')
     print(f'Accuracy Score = {accuracy}')  # % of full matches
     print(f'F1 Score (Micro) = {f1_score_micro}')
     print(f'F1 Score (Macro) = {f1_score_macro}')  # all classes are equal important
     return f1_score_micro
 
 
-def train(epoch, log_steps=5, valid_num=10, model_ver=8):
+def train(epoch, log_steps=135):
     model.train()
-    max_f1 = 0.
 
-    for i, data in enumerate(train_loader):
+    for i, batch in enumerate(train_loader):
         optimizer.zero_grad()
 
-        ids = data['ids'].to(DEVICE)
-        mask = data['mask'].to(DEVICE)
-        token_type_ids = data['token_type_ids'].to(DEVICE)
-        targets = data['targets'].to(DEVICE)
+        targets = batch[1]
+        inputs = {key: value.squeeze(1).to(DEVICE) for key, value in batch[0].items()}
+        inputs['labels'] = targets.to(DEVICE)
 
-        outputs = model(ids, mask, token_type_ids)
-        loss = loss_fn(outputs, targets)
+        outputs = model(**inputs)
+        loss = outputs[0]
+        pred = torch.sigmoid(outputs[1]).cpu()
 
-        acc = metrics.accuracy_score(data['targets'], torch.sigmoid(outputs).cpu() > 0.5)
+        acc = metrics.accuracy_score(targets, pred > 0.5)
         if i % log_steps == 0:
             if i > 0:
                 tac = time.time()
                 # noinspection PyUnboundLocalVariable
                 secs = (len(train_loader) - i) * (tac - tic) / log_steps
-                print(f'Secs: {secs:.2f}, Mins: {secs / 60:.2f}, Hours: {secs / 60 / 60:.2f}')
-                # noinspection PyUnboundLocalVariable
-                print(f'Epoch: {epoch}: {i}/{len(train_loader)}, '
+                print(f'Secs: {secs:.2f}, Mins: {secs / 60:.2f}, Hours: {secs / 60 / 60:.2f}, '
+                      f'Epoch: {epoch}: {i}/{len(train_loader)}, '
                       f'Loss: {loss}, '
                       f'Acc: {acc}')
                 writer.add_scalar('Loss/train', loss, global_step=i)
             tic = time.time()
-
-        if i > 0 and i % max(1, len(train_loader) // valid_num) == 0:
-            f1 = validation()
-            if f1 > max_f1:
-                max_f1 = f1
-                file_name = f'checkpoints/modelV{model_ver}_E{epoch:02d}_S{i:04d}_F{f1:.4f}.pth'
-                torch.save(model, file_name)
-                print('Save', file_name)
-            else:
-                print(f'Skip {f1} < {max_f1}')
 
         loss.backward()
         optimizer.step()
@@ -164,10 +217,9 @@ def train(epoch, log_steps=5, valid_num=10, model_ver=8):
 
 if __name__ == '__main__':
     df = pd.read_csv('data/comment_specialty.csv')
-    df['classes'] = df['classes'].apply(literal_eval)
+    # df = pd.read_csv('/content/drive/MyDrive/DocHack/data/comment_specialty.csv')
+    df['labels'] = df['labels'].apply(literal_eval)
     print(df.head())
-
-    tokenizer_ = TOKENIZER.from_pretrained(MODEL_TYPE, cache_dir='cache')
 
     train_size = 0.8
     train_dataframe = df.sample(frac=train_size, random_state=200)
@@ -178,19 +230,39 @@ if __name__ == '__main__':
     print(f'Train size: {train_dataframe.shape}')
     print(f'Test  size: {test_dataframe.shape}')
 
-    train_dataset = CustomDataset(train_dataframe, tokenizer_, MAX_LEN)
-    test_dataset = CustomDataset(test_dataframe, tokenizer_, MAX_LEN)
+    tokenizer_ = TOKENIZER.from_pretrained(MODEL_TYPE, cache_dir='cache')
+    train_dataset = ClassificationDataset(train_dataframe, tokenizer_, MAX_LEN)
+    test_dataset = ClassificationDataset(test_dataframe, tokenizer_, MAX_LEN)
 
     train_loader = DataLoader(train_dataset, batch_size=TRAIN_BATCH_SIZE, shuffle=True)
     test_loader = DataLoader(test_dataset, batch_size=VALID_BATCH_SIZE, shuffle=True)
 
-    model = BERTClass()
+    config = CONFIG.from_pretrained(MODEL_TYPE, num_labels=CLASSES_NUM, hidden_dropout_prob=0.3)
+    model = eval(MODEL)(config)
     model.to(DEVICE)
 
     # optimizer = optim.RAdam(params=model.parameters(), lr=LEARNING_RATE)
     # optimizer = torch.optim.Adam(params=model.parameters(), lr=LEARNING_RATE)
     optimizer = optim.AdaBound(params=model.parameters(), lr=LEARNING_RATE)
 
+    os.makedirs('checkpoints', exist_ok=True)
+
     # model = torch.load('checkpoints/model6_loss_0.0648547112941742')
-    for e in range(EPOCHS):
+    max_f1 = 0.
+    model_ver = 1
+    for e in range(1000):
+        log_dir = f'logs/{datetime.datetime.now().strftime("%Y%m%d-%H%M%S")}_{e:04d}'
+        writer = SummaryWriter(log_dir)
+
         train(epoch=e)
+        f1_micro = validation()
+
+        writer.add_scalar('F1 Micro', f1_micro, global_step=e)
+
+        if f1_micro > max_f1:
+            max_f1 = f1_micro
+            file_name = f'checkpoints/modelV{model_ver}_E{e:04d}_F{f1_micro:.4f}.pth'
+            torch.save(model, file_name)
+            print('Save', file_name)
+        else:
+            print(f'Skip {f1_micro} < {max_f1}')
