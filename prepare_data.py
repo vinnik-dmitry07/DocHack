@@ -13,7 +13,11 @@ from sklearn.preprocessing import MultiLabelBinarizer
 
 
 def pre_process(s: str):
-    return ''.join(ch.lower() for ch in ' '.join(s.split()) if ch.isalnum() or ch == ' ')
+    for c in [':', '.', ',', '-', '\n']:
+        s = s.replace(c, ' ')
+    lower_alpha_space = ''.join(ch.lower() for ch in s if ch.isalnum() or ch == ' ')
+    one_space = ' '.join(lower_alpha_space.split())
+    return one_space
 
 
 if __name__ == '__main__':
@@ -69,8 +73,13 @@ if __name__ == '__main__':
     comment_specialty.rename(columns={'comment': 'text'}, inplace=True)
     comment_specialty.to_csv('data/comment_specialty.csv', index=False)
 
-    plt.figure()
     keys, counts = np.unique(comment_specialty.text.map(len).to_list(), return_counts=True)
+    plt.bar(keys, counts)
+    plt.show()
+
+    counts = np.cumsum(counts)
+    counts = counts / counts[-1]
+    plt.axhline(0.95)
     plt.bar(keys, counts)
     plt.show()
 
@@ -81,7 +90,7 @@ if __name__ == '__main__':
     disease.dropna(inplace=True, subset=['name'])
     comment_disease = disease[['id', 'name']] \
         .merge(disease_symptom, left_on='id', right_on='disease_id') \
-        .merge(symptom[['id', 'name']], left_on='symptom_id', right_on='id')\
+        .merge(symptom[['id', 'name']], left_on='symptom_id', right_on='id') \
         .groupby('name_x')['name_y'].apply(lambda s: pre_process(' '.join(s))).reset_index()
 
     # comment_disease['name_x'] = np.identity(len(comment_disease), dtype=int).tolist()

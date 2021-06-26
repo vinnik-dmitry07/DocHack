@@ -1,13 +1,10 @@
+--find-links https://download.pytorch.org/whl/torch_stable.html
+torch==1.8.1+cu101
 python-telegram-bot
-# pip install torch==1.8.0+cu101 -f https://download.pytorch.org/whl/torch_stable.html
-torch==1.8.0+cu101
-transformers==4.4.2
-pandas
+sentence-transformers
+simpletransformers
 matplotlib
-numpy
 scikit-learn
-torch_optimizer
-tensorboard
-sentence-transformers==1.0.2
+pandas
 scipy
-# sentencepiece
+numpy
