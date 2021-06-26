@@ -42,12 +42,12 @@ if __name__ == '__main__':
     batch_size = 14
     model = MultiLabelClassificationModel(
         'xlmroberta',  # bert, xlmroberta
-        'xlm-roberta-base',  # bert-base-multilingual-uncased, xlm-roberta-base(large), outputs/best_model
+        'xlm-roberta-base',  # outputs/best_model
         num_labels=31,
         args={
             'max_seq_length': 182,
             'overwrite_output_dir': True,
-            'num_train_epochs': 5,
+            'num_train_epochs': 7,
 
             'save_eval_checkpoints': False,
             'evaluate_during_training': True,
@@ -56,7 +56,7 @@ if __name__ == '__main__':
 
             # 'early_stopping_patience': 3,
             # 'early_stopping_delta': 0,
-            # 'early_stopping_metric': "eval_loss",
+            # 'early_stopping_metric': 'eval_loss',
             # 'early_stopping_metric_minimize': True,
             # 'use_early_stopping': True,
 

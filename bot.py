@@ -48,7 +48,7 @@ def answer_disease(update: Update, context: CallbackContext) -> str:
     results = zip(range(len(distances)), distances)
     results = sorted(results, key=lambda x: x[1])
 
-    res = 'Найбільш схожі хвороби: \n'
+    res = 'The most similar diseases: \n'  # Найбільш схожі хвороби:
     for idx, distance in results[0:closest_n]:
         res += disease_symptoms['disease'][idx] + f' (Probability: {1 - distance:.4f})\n'  # Імовірність
 
@@ -70,8 +70,10 @@ def answer_doctor(update: Update, context: CallbackContext) -> str:
 
 def start(update: Update, _) -> str:
     keyboard = [[
-        InlineKeyboardButton('Визначити хворобу', callback_data=OPTION_PATTERN_PREFIX + DISEASE_OPTION),
-        InlineKeyboardButton('Визначити лікаря', callback_data=OPTION_PATTERN_PREFIX + DOCTOR_OPTION),
+        # Визначити хворобу
+        InlineKeyboardButton('Identify the disease', callback_data=OPTION_PATTERN_PREFIX + DISEASE_OPTION),
+        # Визначити лікаря
+        InlineKeyboardButton('Identify the doctor', callback_data=OPTION_PATTERN_PREFIX + DOCTOR_OPTION),
     ]]
 
     reply_markup = InlineKeyboardMarkup(keyboard)
@@ -118,7 +120,7 @@ def main() -> None:
 if __name__ == '__main__':
     model = MultiLabelClassificationModel(
         'xlmroberta',  # bert, xlmroberta
-        'outputs/best_model_roberta',
+        'outputs/best_model_roberta_punct',
         num_labels=31,
         args={
             'max_seq_length': 182,

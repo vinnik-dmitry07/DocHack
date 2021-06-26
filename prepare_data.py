@@ -13,9 +13,9 @@ from sklearn.preprocessing import MultiLabelBinarizer
 
 
 def pre_process(s: str):
-    for c in [':', '.', ',', '-', '\n']:
+    for c in [':', '-', '\n']:
         s = s.replace(c, ' ')
-    lower_alpha_space = ''.join(ch.lower() for ch in s if ch.isalnum() or ch == ' ')
+    lower_alpha_space = ''.join(ch for ch in s if ch.isalnum() or ch in [' ', ',', '.']).lower()
     one_space = ' '.join(lower_alpha_space.split())
     return one_space
 
