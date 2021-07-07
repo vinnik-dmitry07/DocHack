@@ -15,7 +15,7 @@ eval_loss = 0.1558876243572702
 f1 = 0.43116946664491923
 ```
 
-ROBERTA:
+XLM-RoBERTa:
 ```javascript
 LRAP = 0.610907659358978
 eval_loss = 0.1509880079086035
@@ -25,9 +25,25 @@ f1 = 0.47227688389859934
 <details>
   <summary>TensorBoard charts</summary>
   
+  Red -- BERT, blue -- XLM-RoBERTa.
+  
+  _eval_eval_loss_
+  
   ![](media/eval_eval_loss.svg)
+  
+  _eval_f1_
+  
   ![](media/eval_f1.svg)
+  
+  _eval_LRAP_
+  
   ![](media/eval_LRAP.svg)
+  
+  _loss_
+  
   ![](media/loss.svg)
+  
+  _lr_
+  
   ![](media/lr.svg)
 </details>
